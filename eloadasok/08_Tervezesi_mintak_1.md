@@ -13,8 +13,8 @@ A tervezési minta (design pattern) egy gyakran előforduló programtervezési p
 * **Hatókör szerint:** Architekturális minták (globális felépítés), Tervezési minták (rendszeren belüli megoldások), Idiómák (nyelvspecifikus megoldások).
 * **GoF kategóriák:**
     * **Létrehozási (Creational):** Factory Method, Abstract Factory, Singleton.
-    * **Strukturális (Structural):** Adapter, Composite, Façade.
-    * **Viselkedési (Behavioral):** Template Method, Strategy, Observer.
+    * **Strukturális (Structural):** Adapter, Composite, Façade, Proxy.
+    * **Viselkedési (Behavioral):** Template Method, Strategy, Observer, Command, Memento.
 
 ---
 
