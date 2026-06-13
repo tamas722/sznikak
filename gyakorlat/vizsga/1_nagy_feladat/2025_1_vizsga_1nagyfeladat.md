@@ -22,10 +22,7 @@ public class Kitten // A kiscicát reprezentáló osztály deklarálása.
         
         if (Count > 12) // Ellenőrizzük a feltételt: a boldogság meghaladta-e a 12-t.
         { 
-            if (Purr != null) // Ellenőrizzük, hogy van-e feliratkozó az eseményre (nehogy hibára fusson a program, ha üres).
-            { 
-                Purr(Count); // Kiváltjuk (elsütjük) a Purr eseményt, és paraméterként átadjuk az aktuális boldogságszámot.
-            } 
+           Purr?.Invoke(Count);
         } 
     } 
 
