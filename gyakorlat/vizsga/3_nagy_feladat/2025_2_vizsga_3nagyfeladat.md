@@ -34,9 +34,10 @@ namespace SzalkezelesFeladat2
         static object listLock = new object();
         static Random rnd = new Random();
 
-        // Egy visszaszámláló esemény, ami 2-ről indul. 
-        // Amíg el nem éri a 0-t, a rajta várakozó (Wait) szálak blokkolva lesznek.
-        static CountdownEvent readyLatch = new CountdownEvent(2);
+        // CountdownEvent kiváltása: egy közös számláló és egy ManualResetEvent
+        // A ManualResetEvent 'false' értékkel indul, így a WaitOne() blokkolni fog.
+        static int readyWorkersCount = 0;
+        static ManualResetEvent allReadyEvent = new ManualResetEvent(false);
 
         static void Main(string[] args)
         {
@@ -54,15 +55,14 @@ namespace SzalkezelesFeladat2
             t2.Start();
 
             // 3. lépés: VÁRAKOZÁS (Aktív várakozás nélkül)
-            // A főszál itt szinkron módon megvárja, amíg a számláló eléri a nullát
-            // (vagyis mindkét munkaszál jelzi a készenlétet a Signal() hívással).
-            readyLatch.Wait();
+            // A főszál szinkron módon alszik, amíg az allReadyEvent jelzést (Set) nem kap.
+            allReadyEvent.WaitOne();
             
-            // Ez a sor garantáltan csak akkor fut le, ha mindkét munkaszál végzett az inicializálással
+            // Ez a sor garantáltan csak akkor fut le, ha mindkét munkaszál végzett a kiírással
             Console.WriteLine("Mindenki munkára kész");
 
             // 4. lépés: SZÁLAK BEVÁRÁSA JOIN SEGÍTSÉGÉVEL
-            // A főszál megvárja a munkaszálak tényleges, fizikai leállását/kilépését
+            // A főszál megvárja a munkaszálak tényleges leállását
             t1.Join();
             t2.Join();
 
@@ -75,9 +75,13 @@ namespace SzalkezelesFeladat2
             // 1. Feladat: Készenlét jelzése
             Console.WriteLine("Munkára kész");
             
-            // Csökkentjük a visszaszámlálót. Amikor a második szál is meghívja, 
-            // a readyLatch jelzett állapotba kerül, és a főszál felébred a Wait()-ből.
-            readyLatch.Signal();
+            // Szálbiztosan (Interlocked) megnöveljük a számlálót.
+            // Amelyik szál másodikként ér ide, az fogja a 2-es értéket visszakapni,
+            // így az a szál fogja felébreszteni a várakozó főszálat.
+            if (Interlocked.Increment(ref readyWorkersCount) == 2)
+            {
+                allReadyEvent.Set();
+            }
 
             // 2. Feladat: Számok feldolgozása a listából párhuzamosan
             while (true)
@@ -87,7 +91,7 @@ namespace SzalkezelesFeladat2
                 {
                     if (numbers.Count == 0)
                     {
-                        break; // Ha elfogyott a szám, kilépünk a ciklusból (és a szál befejeződik)
+                        break; // Ha elfogyott a szám, kilépünk a ciklusból
                     }
 
                     // A feladatban megadott kötelező kódrészlet:
@@ -99,7 +103,7 @@ namespace SzalkezelesFeladat2
                     {
                         sum += last;
                     }
-                } // Zár elengedése, hogy a másik munkaszál is hozzáférjen a listához
+                } // Zár elengedése
             }
         }
     }
