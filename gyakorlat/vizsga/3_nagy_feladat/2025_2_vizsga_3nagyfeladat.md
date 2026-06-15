@@ -31,13 +31,12 @@ namespace SzalkezelesFeladat2
         // Közös erőforrások
         static List<int> numbers = new List<int>();
         static int sum = 0;
+        
+        // Külön zároló objektumok a hatékonyság érdekében
         static object listLock = new object();
+        static object sumLock = new object(); 
+        
         static Random rnd = new Random();
-
-        // CountdownEvent kiváltása: egy közös számláló és egy ManualResetEvent
-        // A ManualResetEvent 'false' értékkel indul, így a WaitOne() blokkolni fog.
-        static int readyWorkersCount = 0;
-        static ManualResetEvent allReadyEvent = new ManualResetEvent(false);
 
         static void Main(string[] args)
         {
@@ -47,22 +46,27 @@ namespace SzalkezelesFeladat2
                 numbers.Add(rnd.Next(0, 11)); // 0..10 közötti véletlen számok (inkluzív)
             }
 
+            // Események a hatékony (nem aktív) várakozáshoz
+            AutoResetEvent evt1 = new AutoResetEvent(false);
+            AutoResetEvent evt2 = new AutoResetEvent(false);
+
             // 2. lépés: Munkaszálak létrehozása és indítása
+            // A szálak paraméterként megkapják a saját eseményüket
             Thread t1 = new Thread(Worker);
             Thread t2 = new Thread(Worker);
 
-            t1.Start();
-            t2.Start();
+            t1.Start(evt1);
+            t2.Start(evt2);
 
-            // 3. lépés: VÁRAKOZÁS (Aktív várakozás nélkül)
-            // A főszál szinkron módon alszik, amíg az allReadyEvent jelzést (Set) nem kap.
-            allReadyEvent.WaitOne();
+            // 3. lépés: VÁRAKOZÁS
+            // A főszál WaitOne-nal, blokkolva várakozik a jelzésekre
+            evt1.WaitOne();
+            evt2.WaitOne();
             
-            // Ez a sor garantáltan csak akkor fut le, ha mindkét munkaszál végzett a kiírással
+            // Ez csak a két szál jelzése után fut le
             Console.WriteLine("Mindenki munkára kész");
 
-            // 4. lépés: SZÁLAK BEVÁRÁSA JOIN SEGÍTSÉGÉVEL
-            // A főszál megvárja a munkaszálak tényleges leállását
+            // 4. lépés: Szálak tényleges befejezésének megvárása
             t1.Join();
             t2.Join();
 
@@ -70,42 +74,47 @@ namespace SzalkezelesFeladat2
             Console.WriteLine($"A páratlan számok összege: {sum}");
         }
 
-        static void Worker()
+        static void Worker(object param)
         {
+            AutoResetEvent readyEvent = (AutoResetEvent)param;
+
             // 1. Feladat: Készenlét jelzése
             Console.WriteLine("Munkára kész");
             
-            // Szálbiztosan (Interlocked) megnöveljük a számlálót.
-            // Amelyik szál másodikként ér ide, az fogja a 2-es értéket visszakapni,
-            // így az a szál fogja felébreszteni a várakozó főszálat.
-            if (Interlocked.Increment(ref readyWorkersCount) == 2)
-            {
-                allReadyEvent.Set();
-            }
+            // Értesítjük a főszálat
+            readyEvent.Set();
 
-            // 2. Feladat: Számok feldolgozása a listából párhuzamosan
+            // 2. Feladat: Számok feldolgozása
             while (true)
             {
-                // A listát és a globális összeget védő zár
+                int last;
+
+                // 1. Kritikus szakasz: csak a lista kezelése
                 lock (listLock) 
                 {
                     if (numbers.Count == 0)
                     {
-                        break; // Ha elfogyott a szám, kilépünk a ciklusból
+                        break; // Ha üres a lista, kilépünk
                     }
 
-                    // A feladatban megadott kötelező kódrészlet:
-                    int last = numbers[numbers.Count - 1];
+                    // A feladatban megadott kódrészlet
+                    last = numbers[numbers.Count - 1];
                     numbers.RemoveAt(numbers.Count - 1);
+                } 
 
-                    // Ha a szám páratlan, hozzáadjuk a közös összeghez
-                    if (last % 2 != 0)
+                // A vizsgálat a lock-on kívül történik (párhuzamosítás)
+                if (last % 2 != 0)
+                {
+                    // 2. Kritikus szakasz: csak az összegzés
+                    // Sima lock-ot használunk az Interlocked helyett
+                    lock (sumLock)
                     {
                         sum += last;
                     }
-                } // Zár elengedése
+                }
             }
         }
     }
+}
 }
 ```
