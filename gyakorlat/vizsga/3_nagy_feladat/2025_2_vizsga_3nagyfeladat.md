@@ -23,7 +23,6 @@ Segítség: Véletlen egész számok generálásához egy Random osztálybeli ob
 using System;
 using System.Collections.Generic;
 using System.Threading;
-using System.Threading.Tasks; // Szükséges a Task és az await használatához
 
 namespace SzalkezelesFeladat2
 {
@@ -36,16 +35,15 @@ namespace SzalkezelesFeladat2
         static Random rnd = new Random();
 
         // Egy visszaszámláló esemény, ami 2-ről indul. 
-        // Amíg el nem éri a 0-t, a rajta várakozók blokkolva lesznek.
+        // Amíg el nem éri a 0-t, a rajta várakozó (Wait) szálak blokkolva lesznek.
         static CountdownEvent readyLatch = new CountdownEvent(2);
 
-        // A Main metódus aszinkron lett (async Task), hogy használhassuk az await-et
-        static async Task Main(string[] args)
+        static void Main(string[] args)
         {
             // 1. lépés: Lista feltöltése
             for (int i = 0; i < 1000; i++)
             {
-                numbers.Add(rnd.Next(0, 11)); // 0..10 közötti véletlen számok
+                numbers.Add(rnd.Next(0, 11)); // 0..10 közötti véletlen számok (inkluzív)
             }
 
             // 2. lépés: Munkaszálak létrehozása és indítása
@@ -55,10 +53,10 @@ namespace SzalkezelesFeladat2
             t1.Start();
             t2.Start();
 
-            // 3. lépés: VÁRAKOZÁS AWAIT-TEL (Aktív várakozás nélkül)
-            // A Monitor.Wait helyett aszinkron módon megvárjuk, amíg a számláló eléri a nullát
-            // (vagyis mindkét munkaszál jelzi a készenlétet).
-            await Task.Run(() => readyLatch.Wait());
+            // 3. lépés: VÁRAKOZÁS (Aktív várakozás nélkül)
+            // A főszál itt szinkron módon megvárja, amíg a számláló eléri a nullát
+            // (vagyis mindkét munkaszál jelzi a készenlétet a Signal() hívással).
+            readyLatch.Wait();
             
             // Ez a sor garantáltan csak akkor fut le, ha mindkét munkaszál végzett az inicializálással
             Console.WriteLine("Mindenki munkára kész");
@@ -78,17 +76,18 @@ namespace SzalkezelesFeladat2
             Console.WriteLine("Munkára kész");
             
             // Csökkentjük a visszaszámlálót. Amikor a második szál is meghívja, 
-            // a readyLatch jelzett állapotba kerül, és a főszálon lévő await továbbléphet.
+            // a readyLatch jelzett állapotba kerül, és a főszál felébred a Wait()-ből.
             readyLatch.Signal();
 
             // 2. Feladat: Számok feldolgozása a listából párhuzamosan
             while (true)
             {
-                lock (listLock) // A listát és a globális összeget védő zár
+                // A listát és a globális összeget védő zár
+                lock (listLock) 
                 {
                     if (numbers.Count == 0)
                     {
-                        break; // Ha elfogyott a szám, kilépünk a ciklusból
+                        break; // Ha elfogyott a szám, kilépünk a ciklusból (és a szál befejeződik)
                     }
 
                     // A feladatban megadott kötelező kódrészlet:
@@ -102,7 +101,6 @@ namespace SzalkezelesFeladat2
                     }
                 } // Zár elengedése, hogy a másik munkaszál is hozzáférjen a listához
             }
-            // A ciklusból való kilépés után a szál futása természetes módon befejeződik (kilép)
         }
     }
 }
