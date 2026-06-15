@@ -38,30 +38,32 @@ namespace SzalkezelesFeladat2
         
         static Random rnd = new Random();
 
+        // A TE JAVASLATOD: Statikus ManualResetEvent tömb a két szálnak
+        static ManualResetEvent[] readyEvents = new ManualResetEvent[]
+        {
+            new ManualResetEvent(false),
+            new ManualResetEvent(false)
+        };
+
         static void Main(string[] args)
         {
             // 1. lépés: Lista feltöltése
             for (int i = 0; i < 1000; i++)
             {
-                numbers.Add(rnd.Next(0, 11)); // 0..10 közötti véletlen számok (inkluzív)
+                numbers.Add(rnd.Next(0, 11)); // 0..10 közötti véletlen számok
             }
 
-            // Események a hatékony (nem aktív) várakozáshoz
-            AutoResetEvent evt1 = new AutoResetEvent(false);
-            AutoResetEvent evt2 = new AutoResetEvent(false);
-
             // 2. lépés: Munkaszálak létrehozása és indítása
-            // A szálak paraméterként megkapják a saját eseményüket
             Thread t1 = new Thread(Worker);
             Thread t2 = new Thread(Worker);
 
-            t1.Start(evt1);
-            t2.Start(evt2);
+            // Csak egy sorszámot (indexet) adunk át paraméterként
+            t1.Start(0);
+            t2.Start(1);
 
             // 3. lépés: VÁRAKOZÁS
-            // A főszál WaitOne-nal, blokkolva várakozik a jelzésekre
-            evt1.WaitOne();
-            evt2.WaitOne();
+            // Elegáns várakozás a tömb összes elemére (WaitAll)
+            WaitHandle.WaitAll(readyEvents);
             
             // Ez csak a két szál jelzése után fut le
             Console.WriteLine("Mindenki munkára kész");
@@ -74,15 +76,16 @@ namespace SzalkezelesFeladat2
             Console.WriteLine($"A páratlan számok összege: {sum}");
         }
 
-        static void Worker(object param)
+        static void Worker(object idParam)
         {
-            AutoResetEvent readyEvent = (AutoResetEvent)param;
+            // Lekérjük a szál saját azonosítóját (0 vagy 1)
+            int threadId = (int)idParam;
 
             // 1. Feladat: Készenlét jelzése
             Console.WriteLine("Munkára kész");
             
-            // Értesítjük a főszálat
-            readyEvent.Set();
+            // Értesítjük a főszálat a SAJÁT eseményünkön keresztül
+            readyEvents[threadId].Set();
 
             // 2. Feladat: Számok feldolgozása
             while (true)
@@ -106,7 +109,6 @@ namespace SzalkezelesFeladat2
                 if (last % 2 != 0)
                 {
                     // 2. Kritikus szakasz: csak az összegzés
-                    // Sima lock-ot használunk az Interlocked helyett
                     lock (sumLock)
                     {
                         sum += last;
@@ -115,6 +117,5 @@ namespace SzalkezelesFeladat2
             }
         }
     }
-}
 }
 ```
