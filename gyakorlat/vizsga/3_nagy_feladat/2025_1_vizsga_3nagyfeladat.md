@@ -13,78 +13,95 @@ A feladatban szereplő intervallumok esetében szabadon választhat inkluzív é
 **Segítség:** Véletlen egész számok generálásához egy `Random` osztálybeli objektumot kell létrehozni (ezt csak egyszer), és a `Next(maximum_érték)` művelettel az egyes számokat generálni.
 
 ```csharp
-using System; // Az alapvető rendszerkönyvtárak importálása (pl. a Console osztályhoz)
-using System.Collections.Generic; // A generikus gyűjtemények (mint a Stack<T>) használatához szükséges
-using System.Threading; // A szálkezelő osztályok (Thread, Monitor) elérését biztosítja
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks; // Szükséges a Task és az await használatához
 
-namespace SzalkezelesFeladat // A program névtere, ami összefogja az osztályokat
+namespace SzalkezelesFeladat
 {
-    class Program // A fő programosztály
+    class Program
     {
-        // Közös erőforrások (Shared resources)
-        static Stack<int> stack = new Stack<int>(); // A közös LIFO (utoljára be, először ki) adatszerkezet a számok tárolására
-        static object lockObj = new object(); // Szinkronizációs objektum, ez szolgál "zárként" (lock) a szálak között
-        static Random rnd = new Random(); // Véletlenszám-generátor, a feladat szerint csak egyszer hozzuk létre
-        static int activeWorkers = 2; // Nyilvántartja az aktív (még futó) munkaszálak számát
+        // Közös erőforrások
+        static Stack<int> stack = new Stack<int>();
+        static object lockObj = new object();
+        static Random rnd = new Random();
+        static int activeWorkers = 2;
 
-        static void Main(string[] args) // A program belépési pontja, ez fut a főszálon
+        // Az AutoResetEvent váltja le a Monitor.Wait / Monitor.Pulse használatát.
+        // false (nem jelzett) állapottal indul, tehát az első WaitOne várakozni fog.
+        static AutoResetEvent autoEvent = new AutoResetEvent(false);
+
+        // A Main metódus aszinkron lett (async Task), hogy lehessen használni az await kulcsszót.
+        static async Task Main(string[] args)
         {
-            Thread t1 = new Thread(Worker); // Létrehozzuk az első munkaszálat, ami a Worker metódust fogja futtatni
-            Thread t2 = new Thread(Worker); // Létrehozzuk a második munkaszálat, ami szintén a Worker metódust futtatja
+            Thread t1 = new Thread(Worker);
+            Thread t2 = new Thread(Worker);
 
-            t1.Start(); // Elindítjuk az első munkaszálat
-            t2.Start(); // Elindítjuk a második munkaszálat
+            t1.Start();
+            t2.Start();
 
-            while (true) // A főszál végtelenített ciklusa az adatok folyamatos olvasásához
+            // A főszál ciklusa folyamatosan olvassa az adatokat
+            while (true)
             {
-                lock (lockObj) // Lefoglaljuk a zárat, hogy csak a főszál férjen hozzá a közös változókhoz (stack, activeWorkers)
+                // AWAIT HASZNÁLATA: Mivel a WaitOne() szinkron blokkolna, 
+                // háttérszálra küldjük a várakozást, és aszinkron várjuk be az eredményt.
+                // Ez megelőzi a felesleges aktív várakozást (polling).
+                await Task.Run(() => autoEvent.WaitOne());
+
+                lock (lockObj)
                 {
-                    // Amíg a stack üres ÉS még vannak futó munkaszálak, a főszál várakozik
-                    while (stack.Count == 0 && activeWorkers > 0) 
+                    // Az AutoResetEvent jelzései "összecsúszhatnak", ha a munkaszálak nagyon gyorsak.
+                    // Ezért ha felébredtünk, az összes éppen elérhető elemet ki kell szedni a stackből.
+                    while (stack.Count > 0)
                     {
-                        Monitor.Wait(lockObj); // A főszál elengedi a zárat és várakozó (alvó) állapotba kerül (megelőzi az aktív várakozást)
+                        int number = stack.Pop();
+                        Console.WriteLine($"Kiolvasva a stackből: {number}");
                     }
 
-                    // Ha a felébredés után (vagy eleve) van adat a stack-ben...
-                    if (stack.Count > 0) 
+                    // Ha a stack már üres ÉS az összes munkaszál kilépett
+                    if (activeWorkers == 0 && stack.Count == 0)
                     {
-                        int number = stack.Pop(); // ...kivesszük a legfelső elemet (és egyben töröljük is onnan a Pop művelettel)
-                        Console.WriteLine($"Kiolvasva a stackből: {number}"); // Kiírjuk a kivett számot a konzolra
+                        break; // Kilépés a végtelen ciklusból
                     }
-                    // Ha a stack már teljesen üres ÉS az összes munkaszál végleg kilépett (activeWorkers == 0)...
-                    else if (activeWorkers == 0) 
-                    {
-                        break; // ...kilépünk a főszál végtelen ciklusából, befejezve az adatfeldolgozást
-                    }
-                } // Itt engedi el a lefoglalt zárat a főszál, hogy a munkaszálak ismét hozzáférjenek a stackhez
+                }
             }
 
-            // Ez a sor csak akkor fut le, ha a főszál kilépett a ciklusból (munkaszálak leálltak, stack kiürült)
-            Console.WriteLine("A program sikeresen befejeződött, minden adat feldolgozásra került."); 
+            // JOIN HASZNÁLATA: Ahogy a feladat kérte, a feldolgozás befejeztével 
+            // a főszál szinkron módon be is várja a munkaszálak tényleges (fizikai) leállását.
+            t1.Join();
+            t2.Join();
+
+            Console.WriteLine("A program sikeresen befejeződött, minden adat feldolgozásra került.");
         }
 
-        static void Worker() // A munkaszálak által végrehajtott metódus
+        static void Worker()
         {
-            while (true) // Végtelen ciklus a véletlen számok folyamatos generálásához
+            while (true)
             {
-                int number; // Változó a generált szám ideiglenes tárolására
+                int number;
                 
-                lock (lockObj) // Lefoglaljuk a zárat a véletlenszám-generáláshoz és a stack-be íráshoz, hogy ne legyen ütközés
+                lock (lockObj)
                 {
-                    number = rnd.Next(0, 101); // Generálunk egy véletlen számot 0 és 100 között (inkluzív, ezért 101 a felső exkluzív határ)
-                    stack.Push(number); // Belerakjuk a generált számot a közös stack-be
-                    
-                    Monitor.Pulse(lockObj); // Felébresztjük a várakozó főszálat, jelezve, hogy új adat érhető el a stack-ben
-                } // Itt a munkaszál elengedi a zárat
+                    number = rnd.Next(0, 101); // Véletlen szám 0..100 (inkluzív)
+                    stack.Push(number);
+                }
+                
+                // Jelzés (Pulse helyett): Az AutoResetEvent nyit egy pillanatra, 
+                // felébresztve a feladatban várakozó főszálat.
+                autoEvent.Set();
 
-                if (number == 99) // Ellenőrizzük a kilépési feltételt: ha a generált szám 99...
+                if (number == 99)
                 {
-                    lock (lockObj) // ...akkor újra lefoglaljuk a zárat az adminisztrációhoz (a számláló módosításához)
+                    lock (lockObj)
                     {
-                        activeWorkers--; // Csökkentjük az aktív munkaszálak számát, jelezve a leállást
-                        Monitor.Pulse(lockObj); // Felébresztjük a főszálat, hogy észlelje a munkaszál leállását (fontos, ha a stack épp üres lenne)
-                    } // Zár elengedése
-                    break; // Kilépünk a munkaszál ciklusából, így a munkaszál futása végleg befejeződik
+                        activeWorkers--; // Jelezzük a leállást
+                    }
+                    
+                    // Extra jelzés a főszálnak, nehogy alvó állapotban ragadjon, 
+                    // miután az utolsó szál is végzett.
+                    autoEvent.Set(); 
+                    break;
                 }
             }
         }
