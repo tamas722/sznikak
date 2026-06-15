@@ -20,93 +20,89 @@ A feladatban szereplő esetleges intervallumok esetében szabadon választhat in
 Segítség: Véletlen egész számok generálásához egy Random osztálybeli objektumot kell létrehozni (ezt csak egyszer), és a Next(maximum_érték) művelettel az egyes számokat generálni.
 
 ```csharp
-using System; // Az alapvető rendszerkönyvtárak importálása (pl. Console használatához)
-using System.Collections.Generic; // A generikus gyűjtemények (mint a List<T>) használatához szükséges
-using System.Threading; // A szálkezelő osztályok (Thread, Monitor) elérését biztosítja
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks; // Szükséges a Task és az await használatához
 
-namespace SzalkezelesFeladat2 // A program névtere
+namespace SzalkezelesFeladat2
 {
-    class Program // A fő programosztály
+    class Program
     {
-        // Közös erőforrások (Shared resources)
-        static List<int> numbers = new List<int>(); // A közös lista, amelyből a munkaszálak olvasnak
-        static int sum = 0; // A közös változó, amelyben a páratlan számok összegét tároljuk
-        
-        static object listLock = new object(); // Szinkronizációs objektum (zár) a listához és az összeghez
-        
-        static int readyCount = 0; // Számláló, ami jelzi, hány munkaszál írta ki, hogy "Munkára kész"
-        static object readyLock = new object(); // Külön szinkronizációs objektum a "készenléti" állapothoz
-        
-        static Random rnd = new Random(); // Véletlenszám-generátor, a feladat kérésének megfelelően csak egyszer létrehozva
+        // Közös erőforrások
+        static List<int> numbers = new List<int>();
+        static int sum = 0;
+        static object listLock = new object();
+        static Random rnd = new Random();
 
-        static void Main(string[] args) // A program belépési pontja, a főszál futtatja
+        // Egy visszaszámláló esemény, ami 2-ről indul. 
+        // Amíg el nem éri a 0-t, a rajta várakozók blokkolva lesznek.
+        static CountdownEvent readyLatch = new CountdownEvent(2);
+
+        // A Main metódus aszinkron lett (async Task), hogy használhassuk az await-et
+        static async Task Main(string[] args)
         {
             // 1. lépés: Lista feltöltése
-            for (int i = 0; i < 1000; i++) // 1000 darab számot generálunk
+            for (int i = 0; i < 1000; i++)
             {
-                numbers.Add(rnd.Next(0, 11)); // 0..10 közötti (inkluzív) véletlen szám hozzáadása a listához
+                numbers.Add(rnd.Next(0, 11)); // 0..10 közötti véletlen számok
             }
 
             // 2. lépés: Munkaszálak létrehozása és indítása
-            Thread t1 = new Thread(Worker); // Első munkaszál példányosítása a Worker metódussal
-            Thread t2 = new Thread(Worker); // Második munkaszál példányosítása ugyanazzal a metódussal
+            Thread t1 = new Thread(Worker);
+            Thread t2 = new Thread(Worker);
 
-            t1.Start(); // Első munkaszál elindítása
-            t2.Start(); // Második munkaszál elindítása
+            t1.Start();
+            t2.Start();
 
-            // 3. lépés: Várakozás, amíg mindkét szál munkára kész (aktív várakozás nélkül!)
-            lock (readyLock) // Lefoglaljuk a "készenléti" zárat, hogy biztonságosan olvassuk a readyCount változót
-            {
-                while (readyCount < 2) // Amíg nem áll készen mind a két szál...
-                {
-                    Monitor.Wait(readyLock); // ...a főszál elengedi a zárat és bealszik (így nincs felesleges processzorhasználat)
-                }
-            } // A zár elengedése
+            // 3. lépés: VÁRAKOZÁS AWAIT-TEL (Aktív várakozás nélkül)
+            // A Monitor.Wait helyett aszinkron módon megvárjuk, amíg a számláló eléri a nullát
+            // (vagyis mindkét munkaszál jelzi a készenlétet).
+            await Task.Run(() => readyLatch.Wait());
             
-            // Ez a sor csak azután fut le, hogy mindkét munkaszál jelezte a készenlétet
-            Console.WriteLine("Mindenki munkára kész"); 
+            // Ez a sor garantáltan csak akkor fut le, ha mindkét munkaszál végzett az inicializálással
+            Console.WriteLine("Mindenki munkára kész");
 
-            // 4. lépés: Várakozás a munkaszálak befejeződésére
-            t1.Join(); // A főszál megvárja (blokkolódik), amíg a t1 szál befejezi a futását és kilép
-            t2.Join(); // A főszál megvárja, amíg a t2 szál is kilép
+            // 4. lépés: SZÁLAK BEVÁRÁSA JOIN SEGÍTSÉGÉVEL
+            // A főszál megvárja a munkaszálak tényleges, fizikai leállását/kilépését
+            t1.Join();
+            t2.Join();
 
-            // 5. lépés: Eredmény kiírása (miután a szálak már végeztek)
-            Console.WriteLine($"A páratlan számok összege: {sum}"); // Kiírjuk a végső, közösen kiszámolt összeget
+            // 5. lépés: Eredmény kiírása
+            Console.WriteLine($"A páratlan számok összege: {sum}");
         }
 
-        static void Worker() // A munkaszálak által végrehajtott közös metódus
+        static void Worker()
         {
-            // 1. Feladat: Jelezni a főszálnak, hogy a szál munkára kész
-            Console.WriteLine("Munkára kész"); // Kiírjuk a konzolra a kért szöveget
+            // 1. Feladat: Készenlét jelzése
+            Console.WriteLine("Munkára kész");
             
-            lock (readyLock) // Lefoglaljuk a "készenléti" zárat, hogy biztonságosan módosítsuk a számlálót
-            {
-                readyCount++; // Megnöveljük a készenlétben lévő szálak számát
-                Monitor.Pulse(readyLock); // Szólunk (felébresztjük) a várakozó főszálnak, hogy változott a számláló
-            } // Zár elengedése
+            // Csökkentjük a visszaszámlálót. Amikor a második szál is meghívja, 
+            // a readyLatch jelzett állapotba kerül, és a főszálon lévő await továbbléphet.
+            readyLatch.Signal();
 
-            // 2. Feladat: Számok feldolgozása a listából amíg ki nem ürül
-            while (true) // Végtelen ciklus, amiből majd kilépünk, ha üres a lista
+            // 2. Feladat: Számok feldolgozása a listából párhuzamosan
+            while (true)
             {
-                lock (listLock) // Lefoglaljuk a listát és az összeget védő zárat (hogy a két szál ne zavarja egymást)
+                lock (listLock) // A listát és a globális összeget védő zár
                 {
-                    if (numbers.Count == 0) // Ellenőrizzük, hogy üres-e a lista
+                    if (numbers.Count == 0)
                     {
-                        break; // Ha üres, kilépünk a while ciklusból (és ezáltal a Worker metódus is befejeződik)
+                        break; // Ha elfogyott a szám, kilépünk a ciklusból
                     }
 
-                    // A feladat által megadott kódrészlet a lista utolsó elemének kiolvasására és eltávolítására:
-                    int last = numbers[numbers.Count - 1]; // Kiolvassuk az utolsó elemet
-                    numbers.RemoveAt(numbers.Count - 1);   // Eltávolítjuk az utolsó elemet a listából
+                    // A feladatban megadott kötelező kódrészlet:
+                    int last = numbers[numbers.Count - 1];
+                    numbers.RemoveAt(numbers.Count - 1);
 
-                    // Ellenőrizzük, hogy a szám páratlan-e
-                    if (last % 2 != 0) // Ha a maradék 2-vel osztva nem nulla, akkor páratlan
+                    // Ha a szám páratlan, hozzáadjuk a közös összeghez
+                    if (last % 2 != 0)
                     {
-                        sum += last; // Hozzáadjuk a kivett számot a közös összeghez
+                        sum += last;
                     }
-                } // Itt engedjük el a zárat, hogy a másik szál is tudjon elemet kivenni
+                } // Zár elengedése, hogy a másik munkaszál is hozzáférjen a listához
             }
-            // Miután a break miatt kilép a ciklusból, a metódus lefutott, a munkaszál természetes úton "meghal" (kilép).
+            // A ciklusból való kilépés után a szál futása természetes módon befejeződik (kilép)
         }
     }
 }
