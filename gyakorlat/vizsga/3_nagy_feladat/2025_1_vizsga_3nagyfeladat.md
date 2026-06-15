@@ -16,59 +16,56 @@ A feladatban szereplő intervallumok esetében szabadon választhat inkluzív é
 using System;
 using System.Collections.Generic;
 using System.Threading;
-using System.Threading.Tasks; // Szükséges a Task és az await használatához
 
 namespace SzalkezelesFeladat
 {
     class Program
     {
-        // Közös erőforrások
+        // Közös erőforrások a szálak között
         static Stack<int> stack = new Stack<int>();
         static object lockObj = new object();
         static Random rnd = new Random();
         static int activeWorkers = 2;
 
-        // Az AutoResetEvent váltja le a Monitor.Wait / Monitor.Pulse használatát.
-        // false (nem jelzett) állapottal indul, tehát az első WaitOne várakozni fog.
+        // AutoResetEvent: kezdetben nem jelzett (false), így a WaitOne() blokkolni fog
         static AutoResetEvent autoEvent = new AutoResetEvent(false);
 
-        // A Main metódus aszinkron lett (async Task), hogy lehessen használni az await kulcsszót.
-        static async Task Main(string[] args)
+        static void Main(string[] args)
         {
+            // Két azonos módon viselkedő munkaszál létrehozása és indítása
             Thread t1 = new Thread(Worker);
             Thread t2 = new Thread(Worker);
 
             t1.Start();
             t2.Start();
 
-            // A főszál ciklusa folyamatosan olvassa az adatokat
+            // A főszál folyamatosan olvassa ki és dolgozza fel az adatokat
             while (true)
             {
-                // AWAIT HASZNÁLATA: Mivel a WaitOne() szinkron blokkolna, 
-                // háttérszálra küldjük a várakozást, és aszinkron várjuk be az eredményt.
-                // Ez megelőzi a felesleges aktív várakozást (polling).
-                await Task.Run(() => autoEvent.WaitOne());
+                // Szinkron várakozás aktív polling nélkül. 
+                // Ha a stack üres, a szál elalszik, amíg egy munkaszál nem jelez (Set).
+                autoEvent.WaitOne();
 
                 lock (lockObj)
                 {
-                    // Az AutoResetEvent jelzései "összecsúszhatnak", ha a munkaszálak nagyon gyorsak.
-                    // Ezért ha felébredtünk, az összes éppen elérhető elemet ki kell szedni a stackből.
+                    // Mivel a szálak gyorsak, több elem is bekerülhetett egyetlen jelzés alatt.
+                    // Ezért a felébredés után az összes éppen elérhető elemet kiolvassuk.
                     while (stack.Count > 0)
                     {
                         int number = stack.Pop();
-                        Console.WriteLine($"Kiolvasva a stackből: {number}");
+                        Console.WriteLine($"Főszál kiolvasta a stackből: {number}");
                     }
 
-                    // Ha a stack már üres ÉS az összes munkaszál kilépett
+                    // A főszál akkor fejezi be a futását, ha a munkaszálak már leálltak 
+                    // ÉS az összes adatot feldolgoztuk (a stack már kiürült).
                     if (activeWorkers == 0 && stack.Count == 0)
                     {
-                        break; // Kilépés a végtelen ciklusból
+                        break; // Kilépés a feldolgozó ciklusból
                     }
                 }
             }
 
-            // JOIN HASZNÁLATA: Ahogy a feladat kérte, a feldolgozás befejeztével 
-            // a főszál szinkron módon be is várja a munkaszálak tényleges (fizikai) leállását.
+            // A biztonság kedvéért a főszál megvárja a munkaszálak fizikai leállását is
             t1.Join();
             t2.Join();
 
@@ -81,25 +78,26 @@ namespace SzalkezelesFeladat
             {
                 int number;
                 
+                // Számgenerálás és Push művelet szinkronizált védelme
                 lock (lockObj)
                 {
-                    number = rnd.Next(0, 101); // Véletlen szám 0..100 (inkluzív)
+                    number = rnd.Next(0, 101); // 0..100 közötti véletlen egész szám
                     stack.Push(number);
                 }
                 
-                // Jelzés (Pulse helyett): Az AutoResetEvent nyit egy pillanatra, 
-                // felébresztve a feladatban várakozó főszálat.
+                // Jelzés a főszálnak, hogy új adat érkezett a stackbe
                 autoEvent.Set();
 
+                // Ha a generált szám 99, a munkaszál befejezi a futását
                 if (number == 99)
                 {
                     lock (lockObj)
                     {
-                        activeWorkers--; // Jelezzük a leállást
+                        activeWorkers--; // Aktív munkaszálak számának csökkentése
                     }
                     
-                    // Extra jelzés a főszálnak, nehogy alvó állapotban ragadjon, 
-                    // miután az utolsó szál is végzett.
+                    // Utolsó jelzés leadása, hogy ha a főszál már aludna, 
+                    // mindenképpen ébredjen fel ellenőrizni az activeWorkers állapotát.
                     autoEvent.Set(); 
                     break;
                 }
