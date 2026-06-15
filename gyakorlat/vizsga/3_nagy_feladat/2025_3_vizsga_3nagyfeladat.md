@@ -13,7 +13,6 @@ A feladatban szereplő intervallumok esetében szabadon választhat inkluzív é
 ```csharp
 using System;
 using System.Threading;
-using System.Threading.Tasks; // Szükséges a Task és az await használatához
 
 namespace SzalkezelesFeladat3
 {
@@ -24,57 +23,45 @@ namespace SzalkezelesFeladat3
         static object lockObj = new object(); 
         static Random rnd = new Random(); 
         
-        // ManualResetEvent, ami kezdetben false (zárt, tehát blokkolja a várakozókat).
-        // Amikor a számláló 0 lesz, kinyitjuk (Set), így AZ ÖSSZES várakozó szálat átengedi.
+        // Hatékony eseményalapú várakozás: kezdetben zárt (false), így a WaitOne() blokkol.
+        // Amikor a számláló eléri a 0-t, a Set() kinyitja az ÖSSZES rajta várakozó szál számára.
         static ManualResetEvent mre = new ManualResetEvent(false);
 
-        // Ez a változó teszi lehetővé, hogy kilépjünk a végtelen ciklusból, és használhassuk a Join()-t.
-        static volatile bool isRunning = true;
-
-        static async Task Main(string[] args)
+        static void Main(string[] args)
         {
+            // Két ekvivalens munkaszál létrehozása közös szálfüggvénnyel
             Thread t1 = new Thread(Worker);
             Thread t2 = new Thread(Worker);
 
-            // A feladat által említett "legegyszerűbb technika", hogy a szálak ne ragadjanak be
-            // (a biztonság kedvéért meghagyva, bár a Join és az isRunning miatt amúgy is kilépnének).
+            // A LEGEGYSZERŰBB TECHNIKA a beragadás ellen: Háttérszállá (Background Thread) alakítjuk őket.
+            // Így ha a főszál (Foreground Thread) befejezi a futását, az OS/CLR azonnal lelövi őket is.
             t1.IsBackground = true; 
             t2.IsBackground = true;
 
             t1.Start();
             t2.Start();
 
-            // AWAIT HASZNÁLATA: A főszál aszinkron módon várja meg a számláló nullázódását,
-            // hogy ne blokkolódjon a főszál (UI vagy más műveletek esetén ez elengedhetetlen lenne).
-            await Task.Run(() => WaitForZero());
+            // A főszál meghívja a függvényt, amivel hatékonyan megvárja a 0 elérését
+            WaitForZero();
 
-            // A feladat kérte, hogy innentől az alkalmazás fejezze be a futását.
-            // A JOIN HASZNÁLATÁHOZ jelezzük a szálaknak, hogy álljanak le a végtelen ciklusból:
-            isRunning = false;
-
-            // Bevárjuk a munkaszálak tiszta és biztonságos leállását:
-            t1.Join();
-            t2.Join();
-
-            Console.WriteLine("A főszál kilép, az alkalmazás befejeződik.");
+            Console.WriteLine("A főszál befejezte a munkáját, az alkalmazás kilép.");
         }
 
         static void Worker()
         {
-            // "Végtelen ciklus", ami addig fut, amíg a főszál le nem állítja
-            while (isRunning) 
+            // Végtelen ciklusban futó munkaszál
+            while (true) 
             {
-                Thread.Sleep(rnd.Next(0, 801)); // Véletlenszerű várakozás 0..800 ms között
+                // Véletlenszerű várakozás 0..800 ms között (inkluzív megközelítéssel 801-ig)
+                Thread.Sleep(rnd.Next(0, 801)); 
                 
-                if (isRunning) // Extra ellenőrzés, hogy leállítás után már ne csökkentsünk
-                {
-                    Decrement();
-                }
+                Decrement();
             }
         }
 
         static void Decrement()
         {
+            // Kritikus szakasz a számláló szálbiztos módosításához
             lock (lockObj) 
             {
                 if (counter > 0) 
@@ -84,8 +71,7 @@ namespace SzalkezelesFeladat3
 
                     if (counter == 0)
                     {
-                        // Amikor a számláló eléri a 0-t, "felnyitjuk a sorompót".
-                        // A ManualResetEvent minden rajta várakozó szálat (WaitOne) felébreszt!
+                        // Ha elérte a nullát, kinyitjuk a "sorompót", minden várakozó felébred
                         mre.Set(); 
                     }
                 }
@@ -94,28 +80,28 @@ namespace SzalkezelesFeladat3
 
         static void WaitForZero()
         {
-            // Várakozás blokkolással (aktív várakozás / spinlock nélkül).
-            // A szál itt addig alszik, amíg a Decrement() meg nem hívja az mre.Set()-et.
+            // Hatékony, nem aktív várakozás. A szál itt blokkolódik (alszik), amíg a jelet meg nem kapja.
             mre.WaitOne();
 
-            // A feladat megkövetelte, hogy a felébredés után minden szál írja ki ezt:
+            // Amint felébred a szál (vagy szálak), kiírja a kötelező szöveget
             Console.WriteLine("Zero reached");
 
-            // Csak és kizárólag EGYETLEN szál állíthatja vissza az értéket 5-re!
-            // Ehhez lefoglaljuk a zárat, így a párhuzamosan felébredő szálak sorba állnak.
+            // Biztosítani kell, hogy a felébredő szálak közül CSAK AZ EGYIK állítsa vissza az értéket.
+            // Ehhez kritikus szakaszt nyitunk: az elsőként bejutó szál fogja elvégezni a resetet.
             lock (lockObj)
             {
-                // Az elsőként beérkező szál látja, hogy a counter 0, tehát ő végzi el a visszaállítást.
                 if (counter == 0)
                 {
-                    counter = 5; // Visszaállítás
+                    counter = 5; // Visszaállítás 5-re
                     
-                    // A sorompót "visszazárjuk", hogy a következő körben újra meg lehessen állni előtte.
+                    // Visszazárjuk a ManualResetEvent-et (false-ra), hogy a következő körben 
+                    // a szálak újra blokkolódjanak előtte, amíg újra le nem csökken 0-ra.
                     mre.Reset(); 
                     
-                    Console.WriteLine("[Rendszer: A számláló vissza lett állítva 5-re.]");
+                    Console.WriteLine("[Rendszer: Egy szál visszaállította a számlálót 5-re.]");
                 }
-                // A többi szál, ami ide érkezik, már azt látja, hogy counter == 5, így nem csinálnak semmit.
+                // Azok a szálak, amelyek később jutnak be ide a lock miatt, már azt fogják látni,
+                // hogy a counter értéke 5, így ők már nem futnak rá erre a blokkra.
             }
         }
     }
