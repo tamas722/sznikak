@@ -11,103 +11,112 @@ A feladatban szereplő intervallumok esetében szabadon választhat inkluzív é
 **Segítség:** Véletlen egész számok generálásához egy `Random` osztálybeli objektumot kell létrehozni (ezt csak egyszer), és a `Next(maximum_érték)` művelettel az egyes számokat generálni.
 
 ```csharp
-using System; // Alapvető IO műveletekhez (Console)
-using System.Threading; // Szálkezelés eszközeihez (Thread, Monitor)
+using System;
+using System.Threading;
+using System.Threading.Tasks; // Szükséges a Task és az await használatához
 
-namespace SzalkezelesFeladat3 // Névtér a programnak
+namespace SzalkezelesFeladat3
 {
     class Program
     {
-        // Közös erőforrások (Shared resources)
-        static int counter = 5; // A számláló, 5-ös kezdőértékkel
-        static object lockObj = new object(); // Szinkronizációs objektum (zár) a szálakhoz
+        // Közös erőforrások
+        static int counter = 5; 
+        static object lockObj = new object(); 
+        static Random rnd = new Random(); 
         
-        // Egy "fázis" változó, ami segít a WaitForZero-ban, hogy egy szál se aludjon vissza 
-        // miután a számláló 5-re lett állítva, hanem mindenki sikeresen visszatérjen.
-        static int phase = 0; 
-        
-        static Random rnd = new Random(); // Véletlenszám-generátor, csak egyszer létrehozva
+        // ManualResetEvent, ami kezdetben false (zárt, tehát blokkolja a várakozókat).
+        // Amikor a számláló 0 lesz, kinyitjuk (Set), így AZ ÖSSZES várakozó szálat átengedi.
+        static ManualResetEvent mre = new ManualResetEvent(false);
 
-        static void Main(string[] args) // A főszál belépési pontja
+        // Ez a változó teszi lehetővé, hogy kilépjünk a végtelen ciklusból, és használhassuk a Join()-t.
+        static volatile bool isRunning = true;
+
+        static async Task Main(string[] args)
         {
-            Thread t1 = new Thread(Worker); // Első munkaszál példányosítása
-            Thread t2 = new Thread(Worker); // Második munkaszál példányosítása
+            Thread t1 = new Thread(Worker);
+            Thread t2 = new Thread(Worker);
 
-            // A legegyszerűbb technika a "beragadó" szálak elkerülésére:
-            // Háttérszálként (Background) indítjuk őket, így a főszál kilépésekor azonnal,
-            // automatikusan megszakad a futásuk, az egész program leáll.
+            // A feladat által említett "legegyszerűbb technika", hogy a szálak ne ragadjanak be
+            // (a biztonság kedvéért meghagyva, bár a Join és az isRunning miatt amúgy is kilépnének).
             t1.IsBackground = true; 
             t2.IsBackground = true;
 
-            t1.Start(); // Első munkaszál indítása
-            t2.Start(); // Második munkaszál indítása
+            t1.Start();
+            t2.Start();
 
-            // A főszál bevárja, amíg a számláló eléri a 0-t
-            WaitForZero();
+            // AWAIT HASZNÁLATA: A főszál aszinkron módon várja meg a számláló nullázódását,
+            // hogy ne blokkolódjon a főszál (UI vagy más műveletek esetén ez elengedhetetlen lenne).
+            await Task.Run(() => WaitForZero());
 
-            // Amikor a WaitForZero visszatér, a főszál befejezi futását.
+            // A feladat kérte, hogy innentől az alkalmazás fejezze be a futását.
+            // A JOIN HASZNÁLATÁHOZ jelezzük a szálaknak, hogy álljanak le a végtelen ciklusból:
+            isRunning = false;
+
+            // Bevárjuk a munkaszálak tiszta és biztonságos leállását:
+            t1.Join();
+            t2.Join();
+
             Console.WriteLine("A főszál kilép, az alkalmazás befejeződik.");
         }
 
-        // A szálak által futtatott végtelen ciklus
         static void Worker()
         {
-            while (true) // Végtelen ciklus, ahogy a feladat kérte
+            // "Végtelen ciklus", ami addig fut, amíg a főszál le nem állítja
+            while (isRunning) 
             {
-                // Véletlenszerű várakozás 0 és 800 ms között. 
-                // A Next 2. paramétere exkluzív, ezért 801-et adunk meg, hogy a 800 is benne legyen (inkluzív megközelítés).
-                Thread.Sleep(rnd.Next(0, 801)); 
+                Thread.Sleep(rnd.Next(0, 801)); // Véletlenszerű várakozás 0..800 ms között
                 
-                Decrement(); // Számláló csökkentése
+                if (isRunning) // Extra ellenőrzés, hogy leállítás után már ne csökkentsünk
+                {
+                    Decrement();
+                }
             }
         }
 
-        // A számláló csökkentését végző szálbiztos függvény
         static void Decrement()
         {
-            lock (lockObj) // Lefoglaljuk a zárat, hogy egyszerre csak egy szál módosítsa a számlálót
+            lock (lockObj) 
             {
-                if (counter > 0) // Biztosítjuk, hogy ne menjen 0 alá a számláló, amíg a másik szál újra nem indítja
+                if (counter > 0) 
                 {
-                    counter--; // Érték csökkentése eggyel
-                    Console.WriteLine($"Számláló csökkentve: {counter}"); // Segédkiírás a működés követéséhez
+                    counter--;
+                    Console.WriteLine($"Számláló csökkentve: {counter}");
 
-                    if (counter == 0) // Ha elértük a nullát...
+                    if (counter == 0)
                     {
-                        phase++; // ...megnöveljük a fázist, jelezve a várakozóknak a ciklus végét...
-                        Monitor.PulseAll(lockObj); // ...és felébresztjük AZ ÖSSZES (esetlegesen) várakozó szálat.
+                        // Amikor a számláló eléri a 0-t, "felnyitjuk a sorompót".
+                        // A ManualResetEvent minden rajta várakozó szálat (WaitOne) felébreszt!
+                        mre.Set(); 
                     }
                 }
-            } // Zár elengedése
+            }
         }
 
-        // A várakozást végző szálbiztos függvény (akár több szál is hívhatja)
         static void WaitForZero()
         {
-            lock (lockObj) // Lefoglaljuk a zárat az ellenőrzéshez és várakozáshoz
+            // Várakozás blokkolással (aktív várakozás / spinlock nélkül).
+            // A szál itt addig alszik, amíg a Decrement() meg nem hívja az mre.Set()-et.
+            mre.WaitOne();
+
+            // A feladat megkövetelte, hogy a felébredés után minden szál írja ki ezt:
+            Console.WriteLine("Zero reached");
+
+            // Csak és kizárólag EGYETLEN szál állíthatja vissza az értéket 5-re!
+            // Ehhez lefoglaljuk a zárat, így a párhuzamosan felébredő szálak sorba állnak.
+            lock (lockObj)
             {
-                int myPhase = phase; // Eltároljuk, hogy melyik fázisban kezdtünk el várakozni
-
-                // Amíg a számláló > 0 ÉS a fázis nem változott meg (spurious wakeup ellen)
-                while (counter > 0 && phase == myPhase) 
+                // Az elsőként beérkező szál látja, hogy a counter 0, tehát ő végzi el a visszaállítást.
+                if (counter == 0)
                 {
-                    Monitor.Wait(lockObj); // Várakozó állapotba lépünk (hatékony, nincs aktív várakozás)
-                }
-
-                // Ezt a pontot csak akkor érjük el, ha a számláló 0 lett (és a fázis megnőtt).
-                // Mivel a feladat kérte, hogy minden várakozó szál írja ki a szöveget:
-                Console.WriteLine("Zero reached"); 
-
-                // Mivel csak EGYETLEN szál állíthatja vissza 5-re, ez a feltétel gondoskodik róla.
-                // A Monitor.Wait-ből elsőként felébredő szál látni fogja, hogy counter == 0.
-                if (counter == 0) 
-                {
-                    counter = 5; // Visszaállítja a számlálót 5-re.
+                    counter = 5; // Visszaállítás
+                    
+                    // A sorompót "visszazárjuk", hogy a következő körben újra meg lehessen állni előtte.
+                    mre.Reset(); 
+                    
                     Console.WriteLine("[Rendszer: A számláló vissza lett állítva 5-re.]");
-                    // A többi szál, ami ezután ébred fel a Wait-ből, már azt látja, hogy a counter 5,
-                    // de a "phase == myPhase" feltétel miatt nem fognak visszaaludni a while ciklusban!
                 }
-            } // Zár elengedése
+                // A többi szál, ami ide érkezik, már azt látja, hogy counter == 5, így nem csinálnak semmit.
+            }
         }
     }
 }
