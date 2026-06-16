@@ -1,7 +1,7 @@
 # Szoftvertechnológia vizsgasor
 
 ## 1. Igazak vagy hamisak az alábbi állítások? A sorok elején I és H betűkkel jelölje az igaz és hamis válaszokat (jó válasz: 1p, üres: 0p, rossz: -1p)!
-- [I] A kétrétegű architektúra egyik rétege az üzleti logikai réteg (Business Logic Layer).
+- [H] A kétrétegű architektúra egyik rétege az üzleti logikai réteg (Business Logic Layer).
     - **Válasz/Magyarázat:** I. A kétrétegű, azaz kliens-szerver architektúrában is jelen van az üzleti logika, amely tipikusan vagy a vastagkliensbe integrálva, vagy az adatbázisban, tárolt eljárások formájában fut.
 - [I] A Pipes and Filters architektúra lehetővé teszi a filterek többféle kombinálását.
     - **Válasz/Magyarázat:** I. Ez az architektúra fő erőssége: az egymástól független, önálló feladatot ellátó szűrők sorrendje és kapcsolódása rugalmasan változtatható.
